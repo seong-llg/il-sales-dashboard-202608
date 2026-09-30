@@ -709,6 +709,50 @@ select.fs{background:#0d1b2e;border:1px solid #2a4060;color:#d0d8e8;border-radiu
 #addr-status{font-size:11px;color:#7090a0;white-space:nowrap;min-width:10px;}
 #drop-btn.active{background:#1a3a6a;color:#4a90e2;border-color:#4a90e2;}
 #map.dropping{cursor:crosshair;}
+/* ── Printable report ── */
+#report-view{display:none;position:fixed;inset:0;z-index:5000;background:#fff;color:#111;
+  overflow:auto;padding:22px 26px 40px;font-family:Arial,Helvetica,sans-serif;}
+#report-actions{position:sticky;top:0;background:#fff;padding:0 0 12px;display:flex;gap:8px;
+  align-items:center;border-bottom:1px solid #ddd;margin-bottom:16px;}
+#report-actions button{padding:7px 16px;border-radius:6px;border:1px solid #1F3864;
+  background:#1F3864;color:#fff;font-size:13px;cursor:pointer;font-weight:600;}
+#report-actions button.sec{background:#fff;color:#1F3864;}
+#report-actions .hint{font-size:12px;color:#666;margin-left:auto;}
+#rpt-head h2{font-size:17px;color:#1F3864;margin:0 0 3px;}
+#rpt-head .sub{font-size:12px;color:#444;margin:0 0 2px;}
+#rpt-head .meta{font-size:11px;color:#777;margin:0 0 14px;}
+#rpt-table{border-collapse:collapse;width:100%;font-size:9.5px;margin-bottom:16px;}
+#rpt-table th{background:#1F3864;color:#fff;text-align:left;padding:4px 5px;
+  border:1px solid #1F3864;font-size:9.5px;white-space:nowrap;}
+#rpt-table td{padding:3px 5px;border:1px solid #c8c8c8;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:230px;}
+#rpt-table td.n{text-align:right;font-variant-numeric:tabular-nums;}
+/* the dashboard's dark-theme table rules are global (thead th / tbody td), so
+   every one of them has to be undone inside the report */
+#rpt-table thead th{position:static;}
+#rpt-table tbody td{color:#111;background:#fff;}
+#rpt-table tbody tr{border:0;cursor:default;}
+#rpt-table tbody tr:nth-child(even) td{background:#f4f6fa;}
+#rpt-table tbody tr:hover td{background:inherit;}
+#rpt-table tfoot{display:table-row-group;}   /* otherwise it repeats on every page */
+#rpt-table tfoot td{color:#111;font-weight:700;background:#e8edf5;
+  border-top:2px solid #1F3864;}
+#rpt-table tbody td.yes{color:#1E7B34;font-weight:700;}
+#rpt-map-wrap{page-break-inside:avoid;}
+#rpt-map{height:470px;width:100%;max-width:780px;margin:0 auto;border:1px solid #bbb;}
+#rpt-foot{font-size:10px;color:#777;margin-top:8px;}
+
+@media print{
+  html,body{height:auto!important;overflow:visible!important;background:#fff!important;}
+  #topbar,#filter-drawer,#main{display:none!important;}
+  #report-view{display:block!important;position:static!important;padding:0!important;
+    overflow:visible!important;}
+  #report-actions{display:none!important;}
+  #rpt-table thead{display:table-header-group;}
+  #rpt-table tr{page-break-inside:avoid;}
+  #rpt-map{height:520px;}
+  @page{size:A4 landscape;margin:10mm;}
+}
 #radius-wrap label{font-size:11px;color:#a0c0e0;white-space:nowrap;}
 #radius-input{width:62px;}
 #anchor-chip{max-width:320px;overflow:hidden;text-overflow:ellipsis;}
@@ -955,6 +999,7 @@ td.ly{color:#4caf50;font-weight:600;}td.ln{color:#8090a0;}
             title="Then click anywhere on the map">Drop pin</button>
     <span id="addr-status"></span>
   </div>
+  <button class="fb" id="rpt-btn" onclick="openReport()" title="Printable NTI report for the locations currently shown">Report</button>
   <button class="fb" onclick="resetFilters()">Reset</button>
   <div class="sc" id="anchor-chip" style="display:none"></div>
   <div class="sc" style="margin-left:8px">▲ = Pending &nbsp; ● = Licensed</div>
@@ -1020,6 +1065,17 @@ td.ly{color:#4caf50;font-weight:600;}td.ln{color:#8090a0;}
     <div class="sc">LLG: <span id="sl-m">0</span></div>
     <div class="sc">NTI August: <span id="sn-m">—</span></div>
   </div>
+</div>
+
+<div id="report-view">
+  <div id="report-actions">
+    <button onclick="printReport()">Save as PDF</button>
+    <button class="sec" onclick="closeReport()">Close</button>
+    <span class="hint">Choose "Save as PDF" as the destination. Landscape is preset.</span>
+  </div>
+  <div id="rpt-head"></div>
+  <table id="rpt-table"></table>
+  <div id="rpt-map-wrap"><div id="rpt-map"></div><div id="rpt-foot"></div></div>
 </div>
 
 <div id="main">
@@ -1343,6 +1399,174 @@ map.on('click',e=>{
 
 document.getElementById('addr-input').addEventListener('keydown',e=>{
   if(e.key==='Enter'){ e.preventDefault(); goAddress(); }
+});
+
+// ── Printable NTI report ──────────────────────────────────────────────────────
+// Renders whatever is currently filtered (normally the circle's contents) as a
+// print-ready page: table sorted by NTI descending, then the map. A second
+// Leaflet map is built here rather than screenshotting the live one, so the
+// tiles print properly.
+
+let _rptMap=null;
+
+// Period tag ("202608") and month name are read back off the live table header
+// and title, so this stays correct every month with no edit.
+function _periodTag(){
+  const th=[...document.querySelectorAll('thead th')].find(t=>/Amts Played/.test(t.textContent));
+  const m=th && th.textContent.match(/\((\d{6})\)/);
+  return m ? m[1] : '';
+}
+function _monthName(){
+  const m=document.querySelector('#topbar h1').textContent.match(/—\s*(.+)$/);
+  return m ? m[1].trim() : '';
+}
+function _ntiMeta(){
+  const s=document.getElementById('nti-field-select');
+  return {key:s.value, label:s.options[s.selectedIndex].text};
+}
+
+// One line describing what the report covers.
+function _rptScope(){
+  if(radiusActive()){
+    const nm=anchorLoc.dba||anchorLoc.license_name;
+    const where=anchorLoc.__addr ? '' :
+      [anchorLoc.city,anchorLoc.state].filter(Boolean).join(', ');
+    return {title:`${radiusMi()} mi radius of ${nm}`, sub:where};
+  }
+  const bits=[];
+  const g=id=>document.getElementById(id);
+  if(g('region-filter').value!=='all') bits.push(RN[g('region-filter').value]);
+  if(g('county-filter').value!=='all')  bits.push(g('county-filter').value+' County');
+  if(g('status-filter').value!=='all')  bits.push(g('status-filter').value+' only');
+  if(llgOnly) bits.push('LLG only');
+  const q=g('search-input').value.trim();
+  if(q.length>=2) bits.push(`matching "${q}"`);
+  const mn=g('nti-min').value, mx=g('nti-max').value, nm=_ntiMeta().label;
+  if(mn!=='') bits.push(`${nm} ≥ ${(+mn).toLocaleString()}`);
+  if(mx!=='') bits.push(`${nm} ≤ ${(+mx).toLocaleString()}`);
+  return {title: bits.length ? bits.join(' · ') : 'All Illinois VGT locations', sub:''};
+}
+
+function _fmtMoney(v){
+  return v==null ? '' : '$'+Math.round(v).toLocaleString('en-US');
+}
+
+function buildReport(){
+  const meas=_ntiMeta(), tag=_periodTag(), scope=_rptScope();
+  const rows=[...fData].sort((a,b)=>(b[meas.key]??-Infinity)-(a[meas.key]??-Infinity));
+
+  document.getElementById('rpt-head').innerHTML =
+    `<h2>NTI REPORT — ${scope.title}</h2>`
+    + (scope.sub?`<p class="sub">${scope.sub}</p>`:'')
+    + `<p class="meta">${rows.length.toLocaleString()} location${rows.length===1?'':'s'}`
+    + ` · ${meas.label} · generated ${new Date().toLocaleDateString('en-US',
+        {year:'numeric',month:'long',day:'numeric'})}</p>`;
+
+  const showDist = rows.length>0 && rows[0].dist!=null;
+  const head=['d/b/a','Address','City']
+    .concat(showDist?['Distance']:[])
+    .concat(['VGT Count',`Amount Played (${tag})`,meas.label,'Current TO','LLG?',
+             'License Type','Live Date']);
+
+  let tot={vgt:0,ap:0,nti:0,llg:0};
+  const body=rows.map(l=>{
+    tot.vgt += parseInt(l.vgt_count)||0;
+    tot.ap  += l.amt_played||0;
+    tot.nti += l[meas.key]||0;
+    if(l.llg==='Yes') tot.llg++;
+    return '<tr>'
+      +`<td>${l.dba||l.license_name||''}</td><td>${l.address||''}</td><td>${l.city||''}</td>`
+      +(showDist?`<td class="n">${l.dist.toFixed(1)} mi</td>`:'')
+      +`<td class="n">${l.vgt_count||''}</td>`
+      +`<td class="n">${_fmtMoney(l.amt_played)}</td>`
+      +`<td class="n">${_fmtMoney(l[meas.key])}</td>`
+      +`<td>${l.current_to||''}</td>`
+      +`<td class="${l.llg==='Yes'?'yes':''}">${l.llg||''}</td>`
+      +`<td>${l.license_type||''}</td><td>${l.live_date||''}</td></tr>`;
+  }).join('');
+
+  const span=showDist?4:3;
+  document.getElementById('rpt-table').innerHTML =
+    '<thead><tr>'+head.map(h=>`<th>${h}</th>`).join('')+'</tr></thead>'
+    +'<tbody>'+body+'</tbody>'
+    +`<tfoot><tr><td colspan="${span}">Total — ${rows.length.toLocaleString()} location`
+    +`${rows.length===1?'':'s'}, ${tot.llg} LLG</td>`
+    +`<td class="n">${tot.vgt.toLocaleString()}</td>`
+    +`<td class="n">${_fmtMoney(tot.ap)}</td>`
+    +`<td class="n">${_fmtMoney(tot.nti)}</td>`
+    +'<td></td><td></td><td></td><td></td></tr></tfoot>';
+
+  document.getElementById('rpt-foot').innerHTML =
+    `Amount Played is for ${_monthName()}; the NTI column shows <b>${meas.label}</b>. `
+    + (showDist ? 'Distances are straight-line, not driving distance. ' : '')
+    + 'Source: Illinois Gaming Board.';
+}
+
+function buildReportMap(){
+  const el=document.getElementById('rpt-map');
+  if(_rptMap){ _rptMap.remove(); _rptMap=null; }
+  _rptMap=L.map(el,{center:map.getCenter(),zoom:map.getZoom(),
+                    zoomControl:false,attributionControl:true,
+                    renderer:L.canvas({padding:.5})});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              {attribution:'© OpenStreetMap',maxZoom:18}).addTo(_rptMap);
+  fData.forEach(l=>{
+    if(l.status==='Pending'){
+      const sz=8,h=Math.round(sz*0.866);
+      L.marker([l.lat,l.lng],{interactive:false,icon:L.divIcon({className:'',
+        iconAnchor:[sz,h],html:`<svg width="${sz*2}" height="${h}" viewBox="0 0 ${sz*2} ${h}">`
+        +`<polygon points="${sz},0 ${sz*2},${h} 0,${h}" fill="${l.color}" `
+        +`fill-opacity="0.9" stroke="#fff" stroke-width="1"/></svg>`})}).addTo(_rptMap);
+    } else {
+      L.circleMarker([l.lat,l.lng],{radius:l.llg==='Yes'?6:4,
+        color:l.llg==='Yes'?'#000':l.color,weight:l.llg==='Yes'?2:1,
+        fillColor:l.color,fillOpacity:.85,interactive:false}).addTo(_rptMap);
+    }
+  });
+  if(radiusActive()){
+    // keep the reference: getBounds() on a circle that was never added to a map throws
+    const circ=L.circle([anchorLoc.lat,anchorLoc.lng],{radius:radiusMi()*1609.344,
+      color:'#1F3864',weight:2,dashArray:'5,5',fillColor:'#1F3864',fillOpacity:.05,
+      interactive:false}).addTo(_rptMap);
+    L.circleMarker([anchorLoc.lat,anchorLoc.lng],{radius:7,color:'#fff',weight:3,
+      fillColor:'#1F3864',fillOpacity:1,interactive:false}).addTo(_rptMap);
+    setTimeout(()=>{ _rptMap.invalidateSize();
+      _rptMap.fitBounds(circ.getBounds().pad(.06)); },120);
+  } else {
+    setTimeout(()=>{
+      _rptMap.invalidateSize();
+      if(fData.length) _rptMap.fitBounds(L.latLngBounds(
+        fData.map(l=>[l.lat,l.lng])).pad(.06));
+    },120);
+  }
+}
+
+function openReport(){
+  if(!fData.length){ alert('No locations are currently shown, so there is nothing to report on.'); return; }
+  buildReport();
+  document.getElementById('report-view').style.display='block';
+  document.getElementById('report-view').scrollTop=0;
+  buildReportMap();
+}
+
+function closeReport(){
+  document.getElementById('report-view').style.display='none';
+  if(_rptMap){ _rptMap.remove(); _rptMap=null; }
+}
+
+function printReport(){
+  // the browser names the saved PDF after the document title
+  const scope=_rptScope();
+  const orig=document.title;
+  document.title='NTI Report - '+scope.title.replace(/[\\/:*?"<>|]/g,'-');
+  const restore=()=>{ document.title=orig; window.removeEventListener('afterprint',restore); };
+  window.addEventListener('afterprint',restore);
+  setTimeout(()=>{ window.print(); setTimeout(restore,3000); },60);
+}
+
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape' && document.getElementById('report-view').style.display==='block')
+    closeReport();
 });
 
 function applyFilters(){
