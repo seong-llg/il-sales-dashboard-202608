@@ -686,7 +686,7 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
 #geo-close-btn{cursor:pointer;color:#7090a0;font-size:15px;line-height:1;}
 
 /* ── Top bar ── */
-#topbar{height:52px;display:flex;align-items:center;gap:10px;padding:0 14px;background:#161b27;border-bottom:1px solid #21304a;flex-shrink:0;width:100%;}
+#topbar{min-height:52px;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 14px;background:#161b27;border-bottom:1px solid #21304a;flex-shrink:0;width:100%;}
 #topbar h1{font-size:14px;font-weight:700;color:#fff;white-space:nowrap;}
 .sep{color:#334;}
 #search-wrap{position:relative;flex:1;max-width:280px;}
@@ -702,6 +702,13 @@ select.fs{background:#0d1b2e;border:1px solid #2a4060;color:#d0d8e8;border-radiu
 
 #nti-filter-wrap{display:inline-flex;align-items:center;gap:4px;margin-left:4px;}
 #radius-wrap{display:inline-flex;align-items:center;gap:4px;margin-left:4px;}
+#addr-wrap{display:inline-flex;align-items:center;gap:4px;margin-left:4px;}
+#addr-wrap label{font-size:11px;color:#a0c0e0;white-space:nowrap;}
+#addr-input{width:175px;background:#1a2744;color:#e0e8ff;border:1px solid #2a5298;border-radius:4px;padding:3px 6px;font-size:11px;}
+#addr-input::placeholder{color:#4a6080;}
+#addr-status{font-size:11px;color:#7090a0;white-space:nowrap;min-width:10px;}
+#drop-btn.active{background:#1a3a6a;color:#4a90e2;border-color:#4a90e2;}
+#map.dropping{cursor:crosshair;}
 #radius-wrap label{font-size:11px;color:#a0c0e0;white-space:nowrap;}
 #radius-input{width:62px;}
 #anchor-chip{max-width:320px;overflow:hidden;text-overflow:ellipsis;}
@@ -776,6 +783,11 @@ td.ly{color:#4caf50;font-weight:600;}td.ln{color:#8090a0;}
   #topbar .fb{font-size:14px;padding:8px 14px;flex:1 1 calc(50% - 6px);text-align:center;}
   #topbar>#nti-filter-wrap{width:100%;flex-wrap:wrap;gap:6px;margin-left:0;}
   #topbar>#radius-wrap{width:100%;flex-wrap:wrap;gap:6px;margin-left:0;}
+  #topbar>#addr-wrap{width:100%;flex-wrap:wrap;gap:6px;margin-left:0;}
+  #addr-wrap label{flex:0 0 auto;font-size:13px;}
+  #addr-input{font-size:16px;padding:6px 8px;flex:1 1 60%;width:auto;min-width:130px;}
+  #addr-wrap .fb{flex:1 1 calc(50% - 6px);}
+  #addr-status{flex:1 1 100%;text-align:center;}
   #radius-input{font-size:14px;padding:5px 8px;flex:1;width:80px;}
   #topbar>#anchor-chip{width:100%;max-width:100%;font-size:12px;}
   #nti-field-select{font-size:13px;flex:1;}
@@ -933,6 +945,15 @@ td.ly{color:#4caf50;font-weight:600;}td.ln{color:#8090a0;}
     <input class="nti-input" id="radius-input" type="number" min="0" step="0.5"
            placeholder="mi" oninput="applyFilters()" title="Miles from the selected location">
     <span style="color:#a0c0e0;font-size:11px">mi</span>
+  </div>
+  <div id="addr-wrap">
+    <label>📍 Center:</label>
+    <input id="addr-input" type="text" placeholder="address, ZIP or city…" autocomplete="off"
+           title="Type an address, ZIP code or city, then press Enter"/>
+    <button class="fb" id="addr-go" onclick="goAddress()">Go</button>
+    <button class="fb" id="drop-btn" onclick="toggleDrop()"
+            title="Then click anywhere on the map">Drop pin</button>
+    <span id="addr-status"></span>
   </div>
   <button class="fb" onclick="resetFilters()">Reset</button>
   <div class="sc" id="anchor-chip" style="display:none"></div>
@@ -1140,24 +1161,33 @@ function drawRadius(){
   radCircle=L.circle([anchorLoc.lat,anchorLoc.lng],
     {radius:radiusMi()*1609.344,color:'#4a90e2',weight:2,dashArray:'5,5',
      fillColor:'#4a90e2',fillOpacity:.07,interactive:false}).addTo(map);
-  anchorRing=L.circleMarker([anchorLoc.lat,anchorLoc.lng],
-    {radius:11,color:'#fff',weight:3,fillColor:anchorLoc.color,fillOpacity:1,
-     interactive:false}).addTo(map);
+  if(anchorLoc.__addr){
+    anchorRing=L.marker([anchorLoc.lat,anchorLoc.lng],{interactive:false,
+      icon:L.divIcon({className:'',iconSize:[20,24],iconAnchor:[10,24],html:
+        '<svg width="20" height="24" viewBox="0 0 20 24" xmlns="http://www.w3.org/2000/svg">'
+        +'<path d="M10 0C4.5 0 0 4.5 0 10c0 7.2 10 14 10 14s10-6.8 10-14C20 4.5 15.5 0 10 0z" '
+        +'fill="#4a90e2" stroke="#fff" stroke-width="1.8"/>'
+        +'<circle cx="10" cy="10" r="3.4" fill="#fff"/></svg>'})}).addTo(map);
+  } else {
+    anchorRing=L.circleMarker([anchorLoc.lat,anchorLoc.lng],
+      {radius:11,color:'#fff',weight:3,fillColor:anchorLoc.color,fillOpacity:1,
+       interactive:false}).addTo(map);
+  }
 }
 
 function updateAnchorChip(){
   const chip=document.getElementById('anchor-chip');
   const r=radiusMi();
   if(anchorLoc&&r){
-    const nm=anchorLoc.dba||anchorLoc.license_name;
+    const nm=(anchorLoc.__addr?'📍 ':'')+(anchorLoc.dba||anchorLoc.license_name);
     chip.innerHTML=`Within <b>${r}</b> mi of <b>${nm}</b>`
       +`<span id="anchor-x" onclick="clearRadius()" title="Clear radius search">✕</span>`;
     chip.className='sc armed'; chip.style.display='';
   } else if(r&&!anchorLoc){
-    chip.textContent='Click a location to centre the radius';
+    chip.textContent='Enter an address above, or click a location';
     chip.className='sc armed'; chip.style.display='';
   } else if(anchorLoc){
-    const nm=anchorLoc.dba||anchorLoc.license_name;
+    const nm=(anchorLoc.__addr?'📍 ':'')+(anchorLoc.dba||anchorLoc.license_name);
     chip.innerHTML=`Selected: <b>${nm}</b> — enter a radius`
       +`<span id="anchor-x" onclick="clearRadius()" title="Clear selection">✕</span>`;
     chip.className='sc'; chip.style.display='';
@@ -1169,6 +1199,9 @@ function updateAnchorChip(){
 function clearRadius(){
   anchorLoc=null; hlLic=null;
   document.getElementById('radius-input').value='';
+  document.getElementById('addr-input').value='';
+  document.getElementById('addr-status').textContent='';
+  if(dropMode) toggleDrop();
   const m=document.getElementById('radius-input-m'); if(m) m.value='';
   if(sCol==='dist'){sCol=null;sDir=1;document.querySelectorAll('thead th').forEach(t=>t.className='');}
   applyFilters();
@@ -1187,6 +1220,7 @@ function revealInTable(loc){
 // click just opens that location's details, so the circle stays put and the popup
 // can show its distance from the anchor.
 function pinClick(loc){
+  if(dropMode) return;                  // the map click handler owns this one
   if(radiusActive()) revealInTable(loc);
   else selectLoc(loc);
 }
@@ -1198,6 +1232,118 @@ function selectLoc(loc){
   if(!radiusActive()) map.flyTo([loc.lat,loc.lng],16,{duration:1.2});
   setTimeout(()=>revealInTable(loc),90);
 }
+
+// ── Circle from any address ───────────────────────────────────────────────────
+// Centre the radius on an arbitrary point rather than one of our locations.
+// Resolution is tiered so ZIP and city lookups need no network at all.
+
+let dropMode=false;
+
+const _ZIP_PTS={}, _CITY_PTS={};
+(function buildGeoIndex(){
+  LOCS.forEach(l=>{
+    if(l.lat==null) return;
+    const z=String(l.zip||'').trim().slice(0,5);
+    if(/^\d{5}$/.test(z)) (_ZIP_PTS[z]=_ZIP_PTS[z]||[]).push([l.lat,l.lng]);
+    const c=String(l.city||'').toLowerCase().replace(/[^a-z]/g,'');
+    if(c) (_CITY_PTS[c]=_CITY_PTS[c]||[]).push([l.lat,l.lng]);
+  });
+})();
+
+function _centroid(pts){
+  return {lat:pts.reduce((s,p)=>s+p[0],0)/pts.length,
+          lng:pts.reduce((s,p)=>s+p[1],0)/pts.length};
+}
+function _titleCase(s){
+  return s.toLowerCase().replace(/\b[a-z]/g,c=>c.toUpperCase());
+}
+
+// Ask Nominatim. Biased to Illinois, 8s timeout, falls back to any ZIP in the
+// string so a blocked or slow lookup still lands somewhere sensible.
+async function _geocodeOnline(q){
+  const hasState=/\b(il|illinois)\b/i.test(q);
+  const url='https://nominatim.openstreetmap.org/search?format=json&limit=1'
+    +'&countrycodes=us&q='+encodeURIComponent(hasState?q:q+', Illinois');
+  const ctl=new AbortController(), to=setTimeout(()=>ctl.abort(),8000);
+  try{
+    const res=await fetch(url,{signal:ctl.signal});
+    if(!res.ok) throw new Error('http '+res.status);
+    const j=await res.json();
+    if(!j.length) return {error:'no match for that address'};
+    return {lat:parseFloat(j[0].lat), lng:parseFloat(j[0].lon), src:'online',
+            label:j[0].display_name.split(',').slice(0,3).join(',').trim()};
+  }catch(e){
+    const z=(q.match(/\b(\d{5})\b/)||[])[1];
+    if(z && _ZIP_PTS[z])
+      return Object.assign(_centroid(_ZIP_PTS[z]),
+             {label:'ZIP '+z, src:'zip-fallback'});
+    return {error: e.name==='AbortError' ? 'lookup timed out'
+                                         : 'address lookup unavailable'};
+  }finally{ clearTimeout(to); }
+}
+
+async function _resolveCentre(q){
+  q=q.trim();
+  if(!q) return null;
+  let m=q.match(/^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/);
+  if(m) return {lat:+m[1], lng:+m[2], src:'coords',
+                label:(+m[1]).toFixed(5)+', '+(+m[2]).toFixed(5)};
+  if(/^\d{5}$/.test(q) && _ZIP_PTS[q])
+    return Object.assign(_centroid(_ZIP_PTS[q]), {label:'ZIP '+q, src:'local'});
+  const c=q.toLowerCase().replace(/[^a-z]/g,'');
+  if(c && _CITY_PTS[c])
+    return Object.assign(_centroid(_CITY_PTS[c]), {label:_titleCase(q), src:'local'});
+  return await _geocodeOnline(q);
+}
+
+// Build a synthetic anchor so every existing radius behaviour just works.
+function setCentre(lat,lng,label){
+  anchorLoc={lat:lat, lng:lng, dba:label, license_name:label, color:'#4a90e2',
+             license_number:'@addr:'+lat.toFixed(5)+','+lng.toFixed(5), __addr:true};
+  hlLic=null;
+  const ri=document.getElementById('radius-input');
+  if(!radiusMi()){ ri.value='3'; }        // so the circle is visible straight away
+  applyFilters();
+}
+
+async function goAddress(){
+  const q=document.getElementById('addr-input').value.trim();
+  const st=document.getElementById('addr-status');
+  if(!q){ st.textContent=''; return; }
+  st.style.color='#7090a0'; st.textContent='looking up…';
+  const r=await _resolveCentre(q);
+  if(!r || r.error){
+    st.style.color='#f44336'; st.textContent=r&&r.error?r.error:'not found';
+    return;
+  }
+  st.style.color = r.src==='zip-fallback' ? '#FF9500' : '#4caf50';
+  st.textContent = {local:'matched offline', coords:'coordinates',
+                    online:'found', 'zip-fallback':'ZIP centre (approx)'}[r.src]||'found';
+  setCentre(r.lat, r.lng, r.label);
+}
+
+function toggleDrop(){
+  dropMode=!dropMode;
+  document.getElementById('drop-btn').classList.toggle('active',dropMode);
+  document.getElementById('map').classList.toggle('dropping',dropMode);
+  const st=document.getElementById('addr-status');
+  if(dropMode){ st.style.color='#4a90e2'; st.textContent='click the map…'; }
+  else if(st.textContent==='click the map…'){ st.textContent=''; }
+}
+
+map.on('click',e=>{
+  if(!dropMode) return;
+  toggleDrop();
+  const st=document.getElementById('addr-status');
+  st.style.color='#4caf50'; st.textContent='pin dropped';
+  document.getElementById('addr-input').value='';
+  setCentre(e.latlng.lat, e.latlng.lng,
+            e.latlng.lat.toFixed(5)+', '+e.latlng.lng.toFixed(5));
+});
+
+document.getElementById('addr-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){ e.preventDefault(); goAddress(); }
+});
 
 function applyFilters(){
   const reg=document.getElementById('region-filter').value;
@@ -1254,6 +1400,9 @@ function toggleLLG(){llgOnly=!llgOnly;document.getElementById('llg-btn').classLi
 function resetFilters(){
   anchorLoc=null;
   document.getElementById('radius-input').value='';
+  document.getElementById('addr-input').value='';
+  document.getElementById('addr-status').textContent='';
+  if(dropMode) toggleDrop();
   llgOnly=false;document.getElementById('llg-btn').classList.remove('active');
   document.getElementById('region-filter').value='all';
   document.getElementById('county-filter').value='all';
